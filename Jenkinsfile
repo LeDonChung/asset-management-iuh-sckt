@@ -8,7 +8,6 @@ pipeline {
         PRODUCTION_HOST = "34.158.42.23"
         DOCKER_HUB_REPO = 'ledonchung'
         APP_NAME = 'asset-management-iuh-sckt'
-        DEPLOY_DIR = "/home/chung/asset-management"
     }
     stages {
         stage('Checkout') {
@@ -20,13 +19,11 @@ pipeline {
         stage('Load .env') {
             steps {
                 withCredentials([file(credentialsId: 'asset-management-iuh-sckt', variable: 'ENV_FILE')]) {
-                    sh """
-                        mkdir -p ${DEPLOY_DIR}
-                        cp "$ENV_FILE" ${DEPLOY_DIR}/.env
-                    """
+                    sh 'cp "$ENV_FILE" .env'
                 }
             }
         }
+
 
         stage('Install Dependencies') {
             steps {
@@ -62,7 +59,7 @@ pipeline {
                     script {
                         // SCP file .env và docker-compose.yml
                         sh """
-                            scp -i $KEY -o StrictHostKeyChecking=no ${DEPLOY_DIR}/.env $USER@$PRODUCTION_HOST:${DEPLOY_DIR}/.env
+                            scp -i $KEY -o StrictHostKeyChecking=no .env $USER@$PRODUCTION_HOST:${DEPLOY_DIR}/.env
                             scp -i $KEY -o StrictHostKeyChecking=no docker-compose.yml $USER@$PRODUCTION_HOST:${DEPLOY_DIR}/docker-compose.yml
                         """
 
