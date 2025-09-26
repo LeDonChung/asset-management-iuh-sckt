@@ -1,7 +1,7 @@
 pipeline {
     agent any
     tools {
-        nodejs 'NodeJS' // Cần cấu hình NodeJS trong Jenkins Global Tool Configuration
+        nodejs 'NodeJS' // Cấu hình NodeJS trong Jenkins Global Tool Configuration
     }
     environment {
         BRANCH_DEPLOY = 'deploy'
@@ -24,7 +24,6 @@ pipeline {
                 }
             }
         }
-
 
         stage('Install Dependencies') {
             steps {
@@ -57,66 +56,65 @@ pipeline {
                     sshUserPrivateKey(credentialsId: 'production-server-ssh-key', keyFileVariable: 'KEY', usernameVariable: 'USER'),
                     usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
                 ]) {
-                    script {
-                        // SCP file .env và docker-compose.yml
-                        sh """
-                            scp -i $KEY -o StrictHostKeyChecking=no .env $USER@$PRODUCTION_HOST:${DEPLOY_DIR}/.env
-                            scp -i $KEY -o StrictHostKeyChecking=no docker-compose.yml $USER@$PRODUCTION_HOST:${DEPLOY_DIR}/docker-compose.yml
-                        """
+                    withEnv(["DEPLOY_DIR=/home/${USER}/asset-management", "REMOTE_HOST=${PRODUCTION_HOST}"]) {
+                        script {
+                            // Copy .env và docker-compose.yml lên server
+                            sh """
+                                scp -i \$KEY -o StrictHostKeyChecking=no .env \$USER@\$REMOTE_HOST:\$DEPLOY_DIR/.env || true
+                                scp -i \$KEY -o StrictHostKeyChecking=no docker-compose.yml \$USER@\$REMOTE_HOST:\$DEPLOY_DIR/docker-compose.yml || true
+                            """
 
-                        // SSH vào VPS để deploy
-                        sh """
-                            ssh -i $KEY -o StrictHostKeyChecking=no $USER@$PRODUCTION_HOST << 'EOF'
-                            set -e
+                            // SSH vào server và deploy
+                            sh """
+                                ssh -i \$KEY -o StrictHostKeyChecking=no \$USER@\$REMOTE_HOST << EOF
+                                set -e
 
-                            DEPLOY_DIR=${DEPLOY_DIR}
-                            BRANCH=${BRANCH_DEPLOY}
-
-                            # Tạo thư mục deploy nếu chưa tồn tại
-                            mkdir -p \$DEPLOY_DIR
-
-                            # Clone hoặc update repository
-                            if [ ! -d "\$DEPLOY_DIR/.git" ]; then
-                                git clone -b \$BRANCH https://github.com/LeDonChung/asset-management-iuh-sckt.git \$DEPLOY_DIR
-                            else
+                                # Tạo thư mục deploy nếu chưa có
+                                mkdir -p \$DEPLOY_DIR
                                 cd \$DEPLOY_DIR
-                                git fetch origin
-                                git checkout \$BRANCH
-                                git pull origin \$BRANCH
-                            fi
 
-                            cd \$DEPLOY_DIR
+                                # Clone hoặc pull repository
+                                if [ ! -d "\$DEPLOY_DIR/.git" ]; then
+                                    git clone -b ${BRANCH_DEPLOY} https://github.com/LeDonChung/asset-management-iuh-sckt.git \$DEPLOY_DIR
+                                else
+                                    git fetch origin
+                                    git checkout ${BRANCH_DEPLOY}
+                                    git pull origin ${BRANCH_DEPLOY}
+                                fi
 
-                            # Login Docker Hub
-                            echo "$DOCKER_PASSWORD" | docker login --username "$DOCKER_USERNAME" --password-stdin
+                                # Docker login
+                                echo "\$DOCKER_PASSWORD" | docker login --username "\$DOCKER_USERNAME" --password-stdin
 
-                            # Stop và remove containers cũ
-                            docker-compose -f docker-compose.yml --env-file .env down || true
+                                # Stop và remove containers cũ
+                                docker-compose -f docker-compose.yml --env-file .env down || true
 
-                            # Pull image mới
-                            docker pull ${DOCKER_HUB_REPO}/${APP_NAME}:${env.BUILD_NUMBER}
+                                # Pull image mới
+                                docker pull ${DOCKER_HUB_REPO}/${APP_NAME}:${env.BUILD_NUMBER}
 
-                            # Update docker-compose để sử dụng image mới
-                            sed -i "s|image: ${DOCKER_HUB_REPO}/${APP_NAME}:.*|image: ${DOCKER_HUB_REPO}/${APP_NAME}:${env.BUILD_NUMBER}|g" docker-compose.yml
+                                # Update docker-compose.yml để sử dụng image mới
+                                sed -i "s|image: ${DOCKER_HUB_REPO}/${APP_NAME}:.*|image: ${DOCKER_HUB_REPO}/${APP_NAME}:${env.BUILD_NUMBER}|g" docker-compose.yml
 
-                            # Start services
-                            docker-compose -f docker-compose.yml --env-file .env up -d
+                                # Start services
+                                docker-compose -f docker-compose.yml --env-file .env up -d
 
-                            # Show running containers
-                            docker-compose ps
+                                # Show running containers
+                                docker-compose ps
 
-                            # Cleanup old images
-                            docker image prune -f
+                                # Cleanup old images
+                                docker image prune -f
 EOF
-                        """
+                            """
+                        }
                     }
                 }
             }
         }
     }
+
     post {
         always {
             sh 'docker logout'
+
             // Cleanup old local images
             sh """
             for image in \$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^${DOCKER_HUB_REPO}/${APP_NAME}'); do
@@ -130,9 +128,11 @@ EOF
             done
             """
         }
+
         success {
             echo "✅ Deployment successful! Application is running at http://${PRODUCTION_HOST}:3001"
         }
+
         failure {
             echo "❌ Deployment failed! Please check the logs."
         }
