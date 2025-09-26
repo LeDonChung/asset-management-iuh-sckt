@@ -1,0 +1,20 @@
+services:
+  socket-server:
+    build: .
+    container_name: asset-socket-server
+    ports:
+      - "${PORT:-3001}:${PORT:-3001}"
+    environment:
+      - PORT=${PORT:-3001}
+      - API_BACKEND_NEXTJS_URL=${API_BACKEND_NEXTJS_URL}
+      - PING_INTERVAL=${PING_INTERVAL:-10000}
+      - PING_TIMEOUT=${PING_TIMEOUT:-5000}
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - asset-network
+
+networks:
+  asset-network:
+    driver: bridge
