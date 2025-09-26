@@ -77,6 +77,8 @@ pipeline {
                                 if [ ! -d "\$DEPLOY_DIR/.git" ]; then
                                     git clone -b ${BRANCH_DEPLOY} https://github.com/LeDonChung/asset-management-iuh-sckt.git \$DEPLOY_DIR
                                 else
+                                    git reset --hard
+                                    git clean -fd
                                     git fetch origin
                                     git checkout ${BRANCH_DEPLOY}
                                     git pull origin ${BRANCH_DEPLOY}
