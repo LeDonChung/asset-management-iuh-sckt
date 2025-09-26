@@ -19,6 +19,7 @@ pipeline {
         stage('Load .env') {
             steps {
                 withCredentials([file(credentialsId: 'asset-management-iuh-sckt', variable: 'ENV_FILE')]) {
+                    sh 'rm -f .env'
                     sh 'cp "$ENV_FILE" .env'
                 }
             }
