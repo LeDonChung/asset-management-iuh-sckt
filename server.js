@@ -239,7 +239,12 @@ io.on('connection', (socket) => {
         }
     });
 
-
+    socket.on('send_stop_buzzer', (deviceId) => {
+        console.log('Received send_stop_buzzer from device:', deviceId);
+        if (deviceId) {
+            emitToDevice(deviceId, 'receive_stop_buzzer', { deviceId });
+        }
+    });
     // Arduino yêu cầu Camera chụp ảnh
     socket.on('send_request_capture', (data) => {
         console.log('Arduino requests camera capture:', data);
