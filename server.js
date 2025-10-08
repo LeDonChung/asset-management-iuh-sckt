@@ -26,13 +26,21 @@ app.use((req, res, next) => {
 
 // Socket.io config
 io.attach(server, {
+    cors: {
+        origin: ["http://localhost:3003", "http://localhost:3001", "http://localhost:3000"],
+        methods: ["GET", "POST"],
+        credentials: true
+    },
     pingInterval: process.env.PING_INTERVAL || 10000,
     pingTimeout: process.env.PING_TIMEOUT || 5000,
     cookie: false
 });
 
-// Store connected devices - single map with all info
+// Store connected IoT devices - single map with all info
 let deviceMap = new Map(); // deviceId -> {socketId, type, connectedAt}
+
+// Store connected users from frontend - separate map for user tracking  
+let userMap = new Map(); // userId -> {socketId, connectedAt, userInfo}
 
 // === Helper Functions ===
 function emitToDevice(deviceId, event, payload) {
@@ -45,7 +53,16 @@ function emitToDevice(deviceId, event, payload) {
     console.log(`Sent ${event} to ${deviceId}`);
     return true;
 }
-
+function emitToUser(userId, event, payload) {
+    const info = userMap.get(userId);
+    if (!info) {
+        console.log(`User ${userId} not connected`);
+        return false;
+    }
+    io.to(info.socketId).emit(event, payload);
+    console.log(`Sent ${event} to ${userId}`);
+    return true;
+}
 function getDevicesByType(type) {
     const devices = [];
     deviceMap.forEach((info, deviceId) => {
@@ -57,10 +74,19 @@ function getDevicesByType(type) {
 }
 
 function logConnectedDevices() {
-    console.log('\nConnected Devices Status:');
+    console.log('\nConnected IoT Devices Status:');
     console.log(`Total devices: ${deviceMap.size}`);
     deviceMap.forEach((info, deviceId) => {
         console.log(`  - ${deviceId} (${info.type}) -> Socket: ${info.socketId}`);
+    });
+    console.log('');
+}
+
+function logConnectedUsers() {
+    console.log('\nConnected Users Status:');
+    console.log(`Total users: ${userMap.size}`);
+    userMap.forEach((info, userId) => {
+        console.log(`  - ${userId} (${info.userInfo?.username || 'Unknown'}) -> Socket: ${info.socketId}`);
     });
     console.log('');
 }
@@ -69,7 +95,7 @@ function logConnectedDevices() {
 io.on('connection', (socket) => {
     console.log('A user connected: ', socket.id);
 
-    // Đăng ký device
+    // Đăng ký IoT device (camera, RFID, arduino)
     socket.on('register', (data) => {
         console.log('Device registered:', data);
 
@@ -87,9 +113,42 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Đăng ký user từ frontend
+    socket.on('register_user', (data) => {
+        console.log('📝 User registration attempt:', data);
+
+        if (data && data.userId) {
+            userMap.set(data.userId, {
+                socketId: socket.id,
+                connectedAt: new Date(),
+                userInfo: {
+                    username: data.username || 'Unknown',
+                    email: data.email || '',
+                    role: data.role || ''
+                }
+            });
+
+            console.log(`✅ User ${data.userId} (${data.username || 'Unknown'}) registered with socket ${socket.id}`);
+            logConnectedUsers();
+
+            // Gửi acknowledgment về client
+            socket.emit('user_registered', {
+                success: true,
+                userId: data.userId,
+                message: 'User registered successfully'
+            });
+        } else {
+            console.log('❌ User registration failed: userId is required', data);
+            socket.emit('user_registered', {
+                success: false,
+                message: 'userId is required'
+            });
+        }
+    });
+
     // Khi disconnect
     socket.on('disconnect', () => {
-        console.log('A user disconnected: ', socket.id);
+        console.log('A connection disconnected: ', socket.id);
 
         // Find and remove device by socketId
         let disconnectedDevice = null;
@@ -100,25 +159,92 @@ io.on('connection', (socket) => {
             }
         });
 
+        // Find and remove user by socketId
+        let disconnectedUser = null;
+        userMap.forEach((info, userId) => {
+            if (info.socketId === socket.id) {
+                disconnectedUser = { userId, ...info };
+                userMap.delete(userId);
+            }
+        });
+
         if (disconnectedDevice) {
             console.log(`Device ${disconnectedDevice.deviceId} (${disconnectedDevice.type}) disconnected`);
             logConnectedDevices();
         }
-    });
 
-    // Cảnh báo RFID
-    socket.on('send_command_check_rfid_warning', async (rfids) => {
-        try {
-            console.log('received warning from: ' + socket.id + " - " + rfids);
-            const apiUrl = `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/assets/warning`;
-            const response = await axios.post(apiUrl, rfids);
-            console.log('Response: ', response.data);
-            socket.emit('receive_command_check_rfid_warning', true);
-        } catch (err) {
-            console.error('Error fetching warning data: ', err);
+        if (disconnectedUser) {
+            console.log(`User ${disconnectedUser.userId} (${disconnectedUser.userInfo?.username || 'Unknown'}) disconnected`);
+            logConnectedUsers();
         }
     });
 
+    // Cảnh báo RFID
+    socket.on('send_command_check_rfid_warning', async ({ rfids, roomId, deviceId }) => {
+        try {
+            // 1. Gọi API để lấy thông tin RFID alerts
+            const apiUrl = `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/get-user-rfid-alerts`;
+            const { data: rfidAlerts } = await axios.post(apiUrl, rfids);
+
+            // 2. Lọc ra các RFID cần cảnh báo (có userIds và allowMove = false)
+            const warnings = rfidAlerts
+                .filter(item => !item.allowMove && item.userIds?.length > 0)
+                .map(item => ({
+                    rfid: item.rfid,
+                    userIds: item.userIds,
+                    allowMove: item.allowMove,
+                    assetId: item.assetId,
+                }));
+
+            if (warnings.length === 0) {
+                return;
+            }
+
+            // 3. Chuẩn bị dữ liệu tạo alert trong backend
+            const alertsToCreate = warnings.map(w => ({
+                assetId: w.assetId,
+                deviceId: deviceId,
+                roomId,
+            }));
+
+            // 4. Gửi request tạo alert trong hệ thống
+            const { data: warningData } = await axios.post(
+                `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/bulk`,
+                alertsToCreate
+            );
+
+            // 5. Xử lý dữ liệu cảnh báo từ hệ thống
+                console.error(`[RFID WARNING] Invalid warning data received:`, warningData.map(w => w.asset));
+
+            // 6. Emit dữ liệu cảnh báo về thiết bị iot -> [alertId]
+            socket.emit('receive_command_check_rfid_warning', warningData.map(w => w.id));
+            // 7. Gửi thông báo đến người dùng (nếu cần)
+            // trong warning có userIds và assetId
+            // Chuẩn bị bộ dữ liệu gồm: [{ userIds: ..., warningData }]
+            // userIds từ warning và cần so sánh với assetId trong warningData để lấy đúng cảnh báo
+            const userWarnings = warnings.map(w => ({
+                userIds: w.userIds,
+                warningData: warningData.filter(alert => alert.asset?.rfid === w.rfid)
+            }));
+            console.log(`[RFID WARNING] Emit to users:`, userWarnings);
+            // Gửi đến từng user
+            userWarnings.forEach(uw => {
+                uw.userIds.forEach(userId => {
+                    emitToUser(userId, 'receive_alert', uw.warningData);
+                });
+            });
+
+        } catch (error) {
+            console.error(`[RFID WARNING] Error:`, error.message || error);
+        }
+    });
+
+    socket.on('send_stop_buzzer', (deviceId) => {
+        console.log('Received send_stop_buzzer from device:', deviceId);
+        if (deviceId) {
+            emitToDevice(deviceId, 'receive_stop_buzzer', { deviceId });
+        }
+    });
     // Arduino yêu cầu Camera chụp ảnh
     socket.on('send_request_capture', (data) => {
         console.log('Arduino requests camera capture:', data);
@@ -126,7 +252,7 @@ io.on('connection', (socket) => {
         if (data.deviceReceive) {
             const deviceInfo = deviceMap.get(data.deviceReceive);
             if (deviceInfo && deviceInfo.type === 'camera') {
-                emitToDevice(data.deviceReceive, 'receive_request_capture', { deviceId: data.deviceReceive });
+                emitToDevice(data.deviceReceive, 'receive_request_capture', { deviceId: data.deviceReceive, alertIds: data.alertIds || [] });
             } else if (!deviceInfo) {
                 console.log(`Camera ${data.deviceReceive} not found`);
             } else {
@@ -155,6 +281,53 @@ io.on('connection', (socket) => {
             }
         }
     });
+
+    socket.on('receive_capture', async (data) => {
+        console.log('📸 Received capture data from ESP32-CAM:', data);
+        
+        try {
+            const { imageData, alertIds, deviceId } = data;
+            
+            if (!imageData || !alertIds || alertIds.length === 0) {
+                console.log('❌ Invalid capture data - missing imageData or alertIds');
+                return;
+            }
+
+            // Convert base64 to buffer
+            const imageBuffer = Buffer.from(imageData, 'base64');
+            
+            // Tạo FormData để gửi đến endpoint updateAlertsImage
+            const FormData = require('form-data');
+            const form = new FormData();
+            
+            // Append file
+            form.append('File', imageBuffer, {
+                filename: 'capture.jpg',
+                contentType: 'image/jpeg'
+            });
+            
+            // Append alertIds as JSON string
+            form.append('alertIds', JSON.stringify(alertIds));
+            
+            console.log('🔄 Calling updateAlertsImage endpoint...');
+            
+            // Gọi trực tiếp endpoint updateAlertsImage
+            const response = await axios.post(
+                `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/update-alerts-image`,
+                form,
+                {
+                    headers: {
+                        ...form.getHeaders(),
+                    },
+                }
+            );
+
+            console.log('✅ Alerts updated successfully with uploaded image');
+
+        } catch (error) {
+            console.error('❌ Error processing capture:', error.message || error);
+        }
+    });
 });
 
 // === REST API ===
@@ -179,6 +352,22 @@ app.get('/api/devices', (req, res) => {
     });
 });
 
+app.get('/api/users', (req, res) => {
+    const users = Array.from(userMap.entries()).map(([userId, info]) => ({
+        userId,
+        socketId: info.socketId,
+        connectedAt: info.connectedAt,
+        userInfo: info.userInfo,
+        online: true
+    }));
+
+    res.json({
+        success: true,
+        users: users,
+        total: users.length
+    });
+});
+
 app.post('/api/test-device', (req, res) => {
     const { deviceId, message = 'test' } = req.body;
 
@@ -186,15 +375,15 @@ app.post('/api/test-device', (req, res) => {
         return res.status(400).json({ success: false, message: 'deviceId is required' });
     }
 
-    const success = emitToDevice(deviceId, 'test_message', { 
-        message, 
-        timestamp: new Date(), 
-        from: 'server' 
+    const success = emitToDevice(deviceId, 'test_message', {
+        message,
+        timestamp: new Date(),
+        from: 'server'
     });
 
     if (success) {
-        res.json({ 
-            success: true, 
+        res.json({
+            success: true,
             message: `Test message sent to ${deviceId}`,
             deviceInfo: deviceMap.get(deviceId)
         });
@@ -382,7 +571,8 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
     console.log(`Socket.IO Server v2.0 listening on *:${PORT}`);
     console.log('API Endpoints:');
-    console.log('   GET  /api/devices       - List connected devices');
+    console.log('   GET  /api/devices       - List connected IoT devices');
+    console.log('   GET  /api/users         - List connected users');
     console.log('   POST /api/test-device   - Test device communication');
     console.log('   POST /api/capture-image - Send capture command to cameras');
     console.log('   POST /api/motion-scan   - Send motion scan command to RFID devices');
@@ -391,7 +581,8 @@ server.listen(PORT, () => {
     console.log('   GET  /health            - Health check');
     console.log('');
     console.log('WebSocket Events:');
-    console.log('   register                       - Device registration');
+    console.log('   register                       - IoT Device registration (camera, RFID, arduino)');
+    console.log('   register_user                  - User registration from frontend');
     console.log('   send_command_start_motion_scan    - Camera → RFID motion scan');
     console.log('   send_request_capture              - Arduino → Camera capture');
     console.log('   send_command_check_rfid_warning  - RFID warning check');
