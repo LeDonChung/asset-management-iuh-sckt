@@ -571,7 +571,7 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
     console.log(`Socket.IO Server v2.0 listening on *:${PORT}`);
     console.log('API Endpoints:');
-    console.log('   GET  /api/devices       - List connected IoT devices');
+    console.log('   GET  /api/devices       - List connected IoT devices 2');
     console.log('   GET  /api/users         - List connected users');
     console.log('   POST /api/test-device   - Test device communication');
     console.log('   POST /api/capture-image - Send capture command to cameras');
