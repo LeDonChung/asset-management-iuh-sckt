@@ -70,7 +70,6 @@ pipeline {
                             scp -i $KEY -o StrictHostKeyChecking=no docker-compose.yml $USER@$remoteHost:${deployDir}/docker-compose.yml || true
                         """
         
-                        // SSH vào server để deploy
                         sh """
                             ssh -i $KEY -o StrictHostKeyChecking=no $USER@$remoteHost << 'EOF'
                             set -e
@@ -142,8 +141,7 @@ pipeline {
                             # Cleanup old images
                             docker image prune -f
 EOF
-                            """
-                        }
+                        """
                     }
                 }
             }
