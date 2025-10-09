@@ -1,6 +1,10 @@
 # Use Node.js LTS version
 FROM node:18-alpine
 
+# Add build argument for build number
+ARG BUILD_NUMBER=unknown
+ENV BUILD_NUMBER=${BUILD_NUMBER}
+
 # Set working directory
 WORKDIR /app
 
