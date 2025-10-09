@@ -81,6 +81,12 @@ pipeline {
                                 cd ${deployDir}
                                 git fetch origin
                                 git checkout ${BRANCH_DEPLOY}
+                                
+                                # Reset any local changes to avoid conflicts
+                                git reset --hard HEAD
+                                git clean -fd
+                                
+                                # Pull latest changes
                                 git pull origin ${BRANCH_DEPLOY}
                             fi
         
