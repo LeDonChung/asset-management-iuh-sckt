@@ -1,6 +1,6 @@
 services:
   socket-server:
-    build: ledonchung/asset-management-iuh-sckt:latest
+    image: ledonchung/asset-management-iuh-sckt:latest
     container_name: asset-socket-server
     ports:
       - "${PORT:-3001}:${PORT:-3001}"

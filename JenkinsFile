@@ -34,7 +34,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    sh "docker build -f Dockerfile -t ${DOCKER_HUB_REPO}/${APP_NAME}:${env.BUILD_NUMBER} ."
+                    sh "docker build -f Dockerfile -t ${DOCKER_HUB_REPO}/${APP_NAME}:${env.BUILD_NUMBER} --build-arg BUILD_NUMBER=${env.BUILD_NUMBER} ."
                     sh "docker tag ${DOCKER_HUB_REPO}/${APP_NAME}:${env.BUILD_NUMBER} ${DOCKER_HUB_REPO}/${APP_NAME}:latest"
                 }
             }
@@ -99,11 +99,45 @@ pipeline {
                             # Update docker-compose để sử dụng image mới
                             sed -i "s|image: ${DOCKER_HUB_REPO}/${APP_NAME}:.*|image: ${DOCKER_HUB_REPO}/${APP_NAME}:${env.BUILD_NUMBER}|g" docker-compose.yml
         
-                            # Start services
-                            docker-compose -f docker-compose.yml --env-file .env up -d
+                            # Stop existing containers and remove old containers
+                            docker-compose -f docker-compose.yml --env-file .env down --remove-orphans
+                            
+                            # Remove old images
+                            docker rmi \$(docker images ${DOCKER_HUB_REPO}/${APP_NAME} -q) 2>/dev/null || true
+                            
+                            # Start services with new image
+                            docker-compose -f docker-compose.yml --env-file .env up -d --force-recreate
         
-                            # Show running containers
+                            # Wait for service to be ready
+                            sleep 10
+                            
+                            # Show running containers with image info
                             docker-compose ps
+                            echo "=== Verification: Container is using the correct image ==="
+                            docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | grep asset-socket-server
+                            
+                            # Verify the application is responding
+                            echo "=== Verification: Application health check ==="
+                            sleep 5  # Give more time for the app to start
+                            
+                            # Check if container is running
+                            if docker ps | grep -q "asset-socket-server"; then
+                                echo "✅ Container is running"
+                                
+                                # Test health endpoint
+                                if curl -f http://localhost:${PORT:-3001}/health; then
+                                    echo "✅ Health check passed"
+                                    
+                                    # Check build number
+                                    echo "=== Build Number Verification ==="
+                                    curl -s http://localhost:${PORT:-3001}/api/status | grep -o '"buildNumber":"[^"]*"' || echo "Build number not found"
+                                else
+                                    echo "❌ Health check failed"
+                                fi
+                            else
+                                echo "❌ Container is not running"
+                                docker logs asset-socket-server || true
+                            fi
         
                             # Cleanup old images
                             docker image prune -f

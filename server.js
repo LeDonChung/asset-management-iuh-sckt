@@ -535,6 +535,7 @@ app.get('/api/status', (req, res) => {
         success: true,
         server: 'Socket.IO Server',
         version: '2.0.0',
+        buildNumber: process.env.BUILD_NUMBER || 'unknown',
         uptime: process.uptime(),
         connectedDevices: deviceMap.size,
         devicesByType: {
