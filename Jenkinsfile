@@ -1,7 +1,7 @@
 pipeline {
     agent any
     tools {
-        nodejs 'NodeJS' // Cần cấu hình NodeJS trong Jenkins Global Tool Configuration
+        nodejs 'NodeJS' // Cấu hình NodeJS trong Jenkins Global Tool Configuration
     }
     environment {
         BRANCH_DEPLOY = 'deploy'
@@ -70,7 +70,6 @@ pipeline {
                             scp -i $KEY -o StrictHostKeyChecking=no docker-compose.yml $USER@$remoteHost:${deployDir}/docker-compose.yml || true
                         """
         
-                        // SSH vào server để deploy
                         sh """
                             ssh -i $KEY -o StrictHostKeyChecking=no $USER@$remoteHost << 'EOF'
                             set -e
@@ -82,6 +81,12 @@ pipeline {
                                 cd ${deployDir}
                                 git fetch origin
                                 git checkout ${BRANCH_DEPLOY}
+                                
+                                # Reset any local changes to avoid conflicts
+                                git reset --hard HEAD
+                                git clean -fd
+                                
+                                # Pull latest changes
                                 git pull origin ${BRANCH_DEPLOY}
                             fi
         
@@ -148,9 +153,11 @@ EOF
             }
         }
     }
+
     post {
         always {
             sh 'docker logout'
+
             // Cleanup old local images
             sh """
             for image in \$(docker images --format '{{.Repository}}:{{.Tag}}' | grep '^${DOCKER_HUB_REPO}/${APP_NAME}'); do
@@ -164,11 +171,13 @@ EOF
             done
             """
         }
+
         success {
             echo "✅ Deployment successful! Application is running at http://${PRODUCTION_HOST}:3001"
         }
+
         failure {
             echo "❌ Deployment failed! Please check the logs."
         }
     }
-} 
+}

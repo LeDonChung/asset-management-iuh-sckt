@@ -27,7 +27,7 @@ app.use((req, res, next) => {
 // Socket.io config
 io.attach(server, {
     cors: {
-        origin: ["http://localhost:3003", "http://localhost:3001", "http://localhost:3000"],
+        origin: ["http://34.158.42.23:3003", "http://34.158.42.23:3001", "http://34.158.42.23:3000"],
         methods: ["GET", "POST"],
         credentials: true
     },
@@ -572,7 +572,7 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
     console.log(`Socket.IO Server v2.0 listening on *:${PORT}`);
     console.log('API Endpoints:');
-    console.log('   GET  /api/devices       - List connected IoT devices');
+    console.log('   GET  /api/devices       - List connected IoT devices 2');
     console.log('   GET  /api/users         - List connected users');
     console.log('   POST /api/test-device   - Test device communication');
     console.log('   POST /api/capture-image - Send capture command to cameras');
