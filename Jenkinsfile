@@ -1,11 +1,10 @@
 pipeline {
     agent any
     tools {
-        nodejs 'NodeJS' // Cấu hình NodeJS trong Jenkins Global Tool Configuration
+        nodejs 'NodeJS'
     }
     environment {
         BRANCH_DEPLOY = 'deploy'
-        PRODUCTION_HOST = "34.158.42.23"
         DOCKER_HUB_REPO = 'ledonchung'
         APP_NAME = 'asset-management-iuh-sckt'
     }
@@ -54,7 +53,8 @@ pipeline {
             steps {
                 withCredentials([
                     sshUserPrivateKey(credentialsId: 'production-server-ssh-key', keyFileVariable: 'KEY', usernameVariable: 'USER'),
-                    usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
+                    usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD'),
+                    string(credentialsId: 'production-host', variable: 'PRODUCTION_HOST')
                 ]) {
                     script {
                         def remoteHost = "${PRODUCTION_HOST}"
@@ -173,11 +173,13 @@ EOF
         }
 
         success {
-            echo "✅ Deployment successful! Application is running at http://${PRODUCTION_HOST}:3001"
+            withCredentials([string(credentialsId: 'production-host', variable: 'PRODUCTION_HOST')]) {
+                echo "http://${PRODUCTION_HOST}:3001/health"
+            }
         }
 
         failure {
-            echo "❌ Deployment failed! Please check the logs."
+            echo "Deployment failed! Please check the logs."
         }
     }
 }
