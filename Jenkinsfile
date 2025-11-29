@@ -4,7 +4,7 @@ pipeline {
         nodejs 'NodeJS'
     }
     environment {
-        BRANCH_DEPLOY = 'deploy'
+        BRANCH_DEPLOY = 'production'
         DOCKER_HUB_REPO = 'ledonchung'
         APP_NAME = 'asset-management-iuh-sckt'
     }
