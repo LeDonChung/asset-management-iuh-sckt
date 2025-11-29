@@ -182,16 +182,16 @@ io.on('connection', (socket) => {
     // Cảnh báo RFID
     socket.on('send_command_check_rfid_warning', async ({ rfids, roomId, deviceId }) => {
         try {
+            console.log(`[RFID WARNING] Checking RFID warnings for device ${deviceId} in room ${roomId} with RFIDs:`, rfids);
             // 1. Gọi API để lấy thông tin RFID alerts
-            const apiUrl = `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/get-user-rfid-alerts`;
+            const apiUrl = `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/get-user-rfid-alerts/${roomId}`;
             const { data: rfidAlerts } = await axios.post(apiUrl, rfids);
-
-            // 2. Lọc ra các RFID cần cảnh báo (có userIds và allowMove = false)
+            console.log(`[RFID WARNING] Retrieved RFID alerts:`, rfidAlerts);
+            // 2. Lọc ra các RFID cần cảnh báo (allowMove = false)
             const warnings = rfidAlerts
-                .filter(item => !item.allowMove && item.userIds?.length > 0)
+                .filter(item => !item.allowMove)
                 .map(item => ({
                     rfid: item.rfid,
-                    userIds: item.userIds,
                     allowMove: item.allowMove,
                     assetId: item.assetId,
                 }));
@@ -218,21 +218,6 @@ io.on('connection', (socket) => {
 
             // 6. Emit dữ liệu cảnh báo về thiết bị iot -> [alertId]
             socket.emit('receive_command_check_rfid_warning', warningData.map(w => w.id));
-            // 7. Gửi thông báo đến người dùng (nếu cần)
-            // trong warning có userIds và assetId
-            // Chuẩn bị bộ dữ liệu gồm: [{ userIds: ..., warningData }]
-            // userIds từ warning và cần so sánh với assetId trong warningData để lấy đúng cảnh báo
-            const userWarnings = warnings.map(w => ({
-                userIds: w.userIds,
-                warningData: warningData.filter(alert => alert.asset?.rfid === w.rfid)
-            }));
-            console.log(`[RFID WARNING] Emit to users:`, userWarnings);
-            // Gửi đến từng user
-            userWarnings.forEach(uw => {
-                uw.userIds.forEach(userId => {
-                    emitToUser(userId, 'receive_alert', uw.warningData);
-                });
-            });
 
         } catch (error) {
             console.error(`[RFID WARNING] Error:`, error.message || error);
