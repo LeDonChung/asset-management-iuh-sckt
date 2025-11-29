@@ -27,7 +27,7 @@ app.use((req, res, next) => {
 // Socket.io config
 io.attach(server, {
     cors: {
-        origin: ["http://34.158.42.23:3003", "http://34.158.42.23:3001", "http://34.158.42.23:3000"],
+        origin: ["http://34.61.204.169:3003", "http://34.61.204.169:3001", "http://34.61.204.169:3000"],
         methods: ["GET", "POST"],
         credentials: true
     },
