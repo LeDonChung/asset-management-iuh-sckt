@@ -3,6 +3,9 @@ pipeline {
     tools {
         nodejs 'NodeJS'
     }
+    options {
+        skipDefaultCheckout() 
+    }
     environment {
         BRANCH_DEPLOY = 'production'
         DOCKER_HUB_REPO = 'ledonchung'
