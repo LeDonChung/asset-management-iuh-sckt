@@ -36,13 +36,10 @@ io.attach(server, {
     cookie: false
 });
 
-// Store connected IoT devices - single map with all info
 let deviceMap = new Map(); // deviceId -> {socketId, type, connectedAt}
 
-// Store connected users from frontend - separate map for user tracking  
 let userMap = new Map(); // userId -> {socketId, connectedAt, userInfo}
 
-// === Helper Functions ===
 function emitToDevice(deviceId, event, payload) {
     const info = deviceMap.get(deviceId);
     if (!info) {
@@ -51,16 +48,6 @@ function emitToDevice(deviceId, event, payload) {
     }
     io.to(info.socketId).emit(event, payload);
     console.log(`Sent ${event} to ${deviceId}`);
-    return true;
-}
-function emitToUser(userId, event, payload) {
-    const info = userMap.get(userId);
-    if (!info) {
-        console.log(`User ${userId} not connected`);
-        return false;
-    }
-    io.to(info.socketId).emit(event, payload);
-    console.log(`Sent ${event} to ${userId}`);
     return true;
 }
 function getDevicesByType(type) {
