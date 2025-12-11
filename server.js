@@ -36,13 +36,10 @@ io.attach(server, {
     cookie: false
 });
 
-// Store connected IoT devices - single map with all info
 let deviceMap = new Map(); // deviceId -> {socketId, type, connectedAt}
 
-// Store connected users from frontend - separate map for user tracking  
 let userMap = new Map(); // userId -> {socketId, connectedAt, userInfo}
 
-// === Helper Functions ===
 function emitToDevice(deviceId, event, payload) {
     const info = deviceMap.get(deviceId);
     if (!info) {
@@ -51,16 +48,6 @@ function emitToDevice(deviceId, event, payload) {
     }
     io.to(info.socketId).emit(event, payload);
     console.log(`Sent ${event} to ${deviceId}`);
-    return true;
-}
-function emitToUser(userId, event, payload) {
-    const info = userMap.get(userId);
-    if (!info) {
-        console.log(`User ${userId} not connected`);
-        return false;
-    }
-    io.to(info.socketId).emit(event, payload);
-    console.log(`Sent ${event} to ${userId}`);
     return true;
 }
 function getDevicesByType(type) {
@@ -182,23 +169,47 @@ io.on('connection', (socket) => {
     // Cảnh báo RFID
     socket.on('send_command_check_rfid_warning', async ({ rfids, roomId, deviceId }) => {
         try {
-            // 1. Gọi API để lấy thông tin RFID alerts
-            const apiUrl = `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/get-user-rfid-alerts`;
-            const { data: rfidAlerts } = await axios.post(apiUrl, rfids);
+            console.log(`[RFID WARNING] Checking RFID warnings for device ${deviceId} in room ${roomId} with RFIDs:`, rfids);
 
-            // 2. Lọc ra các RFID cần cảnh báo (có userIds và allowMove = false)
+            // Validate input
+            if (!roomId) {
+                console.error(`[RFID WARNING] roomId is required`);
+                return;
+            }
+
+            if (!rfids || !Array.isArray(rfids) || rfids.length === 0) {
+                console.error(`[RFID WARNING] rfids array is required and must not be empty`);
+                return;
+            }
+
+            // 1. Gọi API để lấy thông tin RFID alerts - đúng endpoint
+            const apiUrl = `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/get-user-rfid-alerts/${roomId}`;
+            console.log(`[RFID WARNING] Calling API: ${apiUrl}`);
+            console.log(`[RFID WARNING] Request body:`, rfids);
+
+            const { data: rfidAlerts } = await axios.post(apiUrl, rfids, {
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            console.log(`[RFID WARNING] Retrieved RFID alerts:`, rfidAlerts);
+
+            // 2. Lọc ra các RFID cần cảnh báo (allowMove = false)
             const warnings = rfidAlerts
-                .filter(item => !item.allowMove && item.userIds?.length > 0)
+                .filter(item => !item.allowMove)
                 .map(item => ({
                     rfid: item.rfid,
-                    userIds: item.userIds,
                     allowMove: item.allowMove,
                     assetId: item.assetId,
                 }));
 
             if (warnings.length === 0) {
+                console.log(`[RFID WARNING] No warnings found, all assets allowed to move`);
                 return;
             }
+
+            console.log(`[RFID WARNING] Found ${warnings.length} warnings:`, warnings);
 
             // 3. Chuẩn bị dữ liệu tạo alert trong backend
             const alertsToCreate = warnings.map(w => ({
@@ -207,35 +218,29 @@ io.on('connection', (socket) => {
                 roomId,
             }));
 
+            console.log(`[RFID WARNING] Creating alerts:`, alertsToCreate);
+
             // 4. Gửi request tạo alert trong hệ thống
             const { data: warningData } = await axios.post(
                 `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/bulk`,
                 alertsToCreate
             );
 
-            // 5. Xử lý dữ liệu cảnh báo từ hệ thống
-                console.error(`[RFID WARNING] Invalid warning data received:`, warningData.map(w => w.asset));
+            console.log(`[RFID WARNING] Created alerts:`, warningData);
 
-            // 6. Emit dữ liệu cảnh báo về thiết bị iot -> [alertId]
-            socket.emit('receive_command_check_rfid_warning', warningData.map(w => w.id));
-            // 7. Gửi thông báo đến người dùng (nếu cần)
-            // trong warning có userIds và assetId
-            // Chuẩn bị bộ dữ liệu gồm: [{ userIds: ..., warningData }]
-            // userIds từ warning và cần so sánh với assetId trong warningData để lấy đúng cảnh báo
-            const userWarnings = warnings.map(w => ({
-                userIds: w.userIds,
-                warningData: warningData.filter(alert => alert.asset?.rfid === w.rfid)
-            }));
-            console.log(`[RFID WARNING] Emit to users:`, userWarnings);
-            // Gửi đến từng user
-            userWarnings.forEach(uw => {
-                uw.userIds.forEach(userId => {
-                    emitToUser(userId, 'receive_alert', uw.warningData);
-                });
-            });
+            // 5. Emit dữ liệu cảnh báo về thiết bị iot -> [alertId]
+            const alertIds = warningData.map(w => w.id);
+            socket.emit('receive_command_check_rfid_warning', alertIds);
+            console.log(`[RFID WARNING] Sent alert IDs to device:`, alertIds);
 
         } catch (error) {
-            console.error(`[RFID WARNING] Error:`, error.message || error);
+            console.error(`[RFID WARNING] Error:`, {
+                message: error.message,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                url: error.config?.url,
+                data: error.response?.data
+            });
         }
     });
 
@@ -284,10 +289,10 @@ io.on('connection', (socket) => {
 
     socket.on('receive_capture', async (data) => {
         console.log('📸 Received capture data from ESP32-CAM:', data);
-        
+
         try {
             const { imageData, alertIds, deviceId } = data;
-            
+
             if (!imageData || !alertIds || alertIds.length === 0) {
                 console.log('❌ Invalid capture data - missing imageData or alertIds');
                 return;
@@ -295,22 +300,22 @@ io.on('connection', (socket) => {
 
             // Convert base64 to buffer
             const imageBuffer = Buffer.from(imageData, 'base64');
-            
+
             // Tạo FormData để gửi đến endpoint updateAlertsImage
             const FormData = require('form-data');
             const form = new FormData();
-            
+
             // Append file
             form.append('File', imageBuffer, {
                 filename: 'capture.jpg',
                 contentType: 'image/jpeg'
             });
-            
+
             // Append alertIds as JSON string
             form.append('alertIds', JSON.stringify(alertIds));
-            
+
             console.log('🔄 Calling updateAlertsImage endpoint...');
-            
+
             // Gọi trực tiếp endpoint updateAlertsImage
             const response = await axios.post(
                 `${process.env.API_BACKEND_NEXTJS_URL}/api/v1/alerts/update-alerts-image`,
